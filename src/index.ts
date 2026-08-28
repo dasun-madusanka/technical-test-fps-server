@@ -31,7 +31,10 @@ io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) return next(new Error("No token provided"));
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; username: string };
+    const payload = jwt.verify(token, JWT_SECRET) as {
+      userId: string;
+      username: string;
+    };
     (socket.data as AuthedSocketData).userId = payload.userId;
     (socket.data as AuthedSocketData).username = payload.username;
     next();
@@ -79,19 +82,27 @@ io.on("connection", (socket) => {
 
   socket.on("queue:leave", () => matchmaker.dequeue(userId));
 
-  socket.on("player:move", (data: { x: number; y: number; z: number; yaw: number }) => {
-    const roomId = socketToRoom.get(socket.id);
-    if (!roomId) return;
-    rooms.get(roomId)?.updateMovement(userId, data.x, data.y, data.z, data.yaw);
-  });
+  socket.on(
+    "player:move",
+    (data: { x: number; y: number; z: number; yaw: number }) => {
+      const roomId = socketToRoom.get(socket.id);
+      if (!roomId) return;
+      rooms
+        .get(roomId)
+        ?.updateMovement(userId, data.x, data.y, data.z, data.yaw);
+    },
+  );
 
   socket.on(
     "player:shoot",
-    (data: { origin: { x: number; y: number; z: number }; direction: { x: number; y: number; z: number } }) => {
+    (data: {
+      origin: { x: number; y: number; z: number };
+      direction: { x: number; y: number; z: number };
+    }) => {
       const roomId = socketToRoom.get(socket.id);
       if (!roomId) return;
       rooms.get(roomId)?.handleShoot(userId, data.origin, data.direction);
-    }
+    },
   );
 
   socket.on("player:reload", () => {
@@ -107,7 +118,124 @@ io.on("connection", (socket) => {
       socketToRoom.delete(socket.id);
     }
   });
+
+  socket.on("room:create", () => {
+    const roomCode = generateRoomCode();
+    const room = new GameRoom(roomCode, (event, payload) => {
+      io.to(roomCode).emit(event, payload);
+    });
+    room.addPlayer(userId, socket.id, username, 0);
+    rooms.set(roomCode, room);
+    socket.join(roomCode);
+    socketToRoom.set(socket.id, roomCode);
+
+    socket.emit("room:created", {
+      roomCode,
+      players: [{ id: userId, username, ready: false }],
+    });
+  });
+
+  socket.on("room:join", (data: { roomCode: string }) => {
+    const room = rooms.get(data.roomCode);
+    if (!room) {
+      socket.emit("room:error", { message: "Room not found." });
+      return;
+    }
+    if (room.players.size >= 2) {
+      socket.emit("room:error", { message: "Room is full." });
+      return;
+    }
+
+    room.addPlayer(userId, socket.id, username, 1);
+    socket.join(data.roomCode);
+    socketToRoom.set(socket.id, data.roomCode);
+
+    const playerList = [...room.players.values()].map((p) => ({
+      id: p.id,
+      username: p.username,
+      ready: false,
+    }));
+    io.to(data.roomCode).emit("room:playerJoined", { players: playerList });
+  });
+
+  socket.on("room:ready", (data: { ready: boolean }) => {
+    const roomId = socketToRoom.get(socket.id);
+    if (!roomId) return;
+    io.to(roomId).emit("room:playerReady", { userId, ready: data.ready });
+  });
+
+  socket.on("room:start", () => {
+    const roomId = socketToRoom.get(socket.id);
+    if (!roomId) return;
+    const room = rooms.get(roomId);
+    if (!room || room.players.size < 2) return;
+    io.to(roomId).emit("match:found", {
+      roomId,
+      players: [...room.players.values()].map((p) => ({
+        id: p.id,
+        username: p.username,
+      })),
+    });
+  });
+
+  socket.on("room:chat", (data: { message: string }) => {
+    const roomId = socketToRoom.get(socket.id);
+    if (!roomId) return;
+    io.to(roomId).emit("room:chatMessage", {
+      username,
+      message: data.message.slice(0, 200),
+      timestamp: Date.now(),
+    });
+  });
+
+  socket.on("room:leave", () => {
+    const roomId = socketToRoom.get(socket.id);
+    if (!roomId) return;
+    const room = rooms.get(roomId);
+    if (room) {
+      room.removePlayer(userId);
+      socket.leave(roomId);
+      socketToRoom.delete(socket.id);
+      if (room.players.size === 0) {
+        room.destroy();
+        rooms.delete(roomId);
+      } else {
+        io.to(roomId).emit("room:playerLeft", { userId });
+      }
+    }
+  });
+
+    socket.on("match:enter", (data: { roomCode: string }) => {
+    const room = rooms.get(data.roomCode);
+    if (!room) {
+      socket.emit("room:error", { message: "Match not found." });
+      return;
+    }
+    const player = room.players.get(userId);
+    if (!player) {
+      socket.emit("room:error", { message: "You are not part of this match." });
+      return;
+    }
+
+    player.socketId = socket.id;
+    socket.join(data.roomCode);
+    socketToRoom.set(socket.id, data.roomCode);
+
+    socket.emit("match:found", {
+      roomId: data.roomCode,
+      players: [...room.players.values()].map((p) => ({ id: p.id, username: p.username })),
+    });
+  });
 });
+
+function generateRoomCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars like O/0, I/1
+  let code = "";
+  for (let i = 0; i < 5; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return rooms.has(code) ? generateRoomCode() : code;
+}
 
 server.listen(PORT, () => {
   console.log(`Game server listening on port ${PORT}`);
