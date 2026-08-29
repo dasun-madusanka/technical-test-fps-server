@@ -46,39 +46,49 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   const { userId, username } = socket.data as AuthedSocketData;
 
-  socket.on("queue:join", () => {
-    matchmaker.enqueue({ userId, username, socketId: socket.id });
-    const match = matchmaker.tryMatch();
-
-    if (match) {
-      const [a, b] = match;
-      const roomId = `room_${a.userId}_${b.userId}_${Date.now()}`;
-      const room = new GameRoom(roomId, (event, payload) => {
-        io.to(roomId).emit(event, payload);
+  socket.on(
+    "queue:join",
+    (data?: {
+      weapon?: { damage: number; fireRate: number; magazineSize: number };
+    }) => {
+      matchmaker.enqueue({
+        userId,
+        username,
+        socketId: socket.id,
+        weapon: data?.weapon,
       });
-      room.addPlayer(a.userId, a.socketId, a.username, 0);
-      room.addPlayer(b.userId, b.socketId, b.username, 1);
-      rooms.set(roomId, room);
+      const match = matchmaker.tryMatch();
 
-      for (const p of [a, b]) {
-        const s = io.sockets.sockets.get(p.socketId);
-        if (s) {
-          s.join(roomId);
-          socketToRoom.set(p.socketId, roomId);
+      if (match) {
+        const [a, b] = match;
+        const roomId = `room_${a.userId}_${b.userId}_${Date.now()}`;
+        const room = new GameRoom(roomId, (event, payload) => {
+          io.to(roomId).emit(event, payload);
+        });
+        room.addPlayer(a.userId, a.socketId, a.username, 0, a.weapon);
+        room.addPlayer(b.userId, b.socketId, b.username, 1, b.weapon);
+        rooms.set(roomId, room);
+
+        for (const p of [a, b]) {
+          const s = io.sockets.sockets.get(p.socketId);
+          if (s) {
+            s.join(roomId);
+            socketToRoom.set(p.socketId, roomId);
+          }
         }
-      }
 
-      io.to(roomId).emit("match:found", {
-        roomId,
-        players: [
-          { id: a.userId, username: a.username },
-          { id: b.userId, username: b.username },
-        ],
-      });
-    } else {
-      socket.emit("queue:waiting", { position: matchmaker.queueLength() });
-    }
-  });
+        io.to(roomId).emit("match:found", {
+          roomId,
+          players: [
+            { id: a.userId, username: a.username },
+            { id: b.userId, username: b.username },
+          ],
+        });
+      } else {
+        socket.emit("queue:waiting", { position: matchmaker.queueLength() });
+      }
+    },
+  );
 
   socket.on("queue:leave", () => matchmaker.dequeue(userId));
 
@@ -119,44 +129,55 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("room:create", () => {
-    const roomCode = generateRoomCode();
-    const room = new GameRoom(roomCode, (event, payload) => {
-      io.to(roomCode).emit(event, payload);
-    });
-    room.addPlayer(userId, socket.id, username, 0);
-    rooms.set(roomCode, room);
-    socket.join(roomCode);
-    socketToRoom.set(socket.id, roomCode);
+  socket.on(
+    "room:create",
+    (data?: {
+      weapon?: { damage: number; fireRate: number; magazineSize: number };
+    }) => {
+      const roomCode = generateRoomCode();
+      const room = new GameRoom(roomCode, (event, payload) => {
+        io.to(roomCode).emit(event, payload);
+      });
+      room.addPlayer(userId, socket.id, username, 0, data?.weapon);
+      rooms.set(roomCode, room);
+      socket.join(roomCode);
+      socketToRoom.set(socket.id, roomCode);
 
-    socket.emit("room:created", {
-      roomCode,
-      players: [{ id: userId, username, ready: false }],
-    });
-  });
+      socket.emit("room:created", {
+        roomCode,
+        players: [{ id: userId, username, ready: false }],
+      });
+    },
+  );
 
-  socket.on("room:join", (data: { roomCode: string }) => {
-    const room = rooms.get(data.roomCode);
-    if (!room) {
-      socket.emit("room:error", { message: "Room not found." });
-      return;
-    }
-    if (room.players.size >= 2) {
-      socket.emit("room:error", { message: "Room is full." });
-      return;
-    }
+  socket.on(
+    "room:join",
+    (data: {
+      roomCode: string;
+      weapon?: { damage: number; fireRate: number; magazineSize: number };
+    }) => {
+      const room = rooms.get(data.roomCode);
+      if (!room) {
+        socket.emit("room:error", { message: "Room not found." });
+        return;
+      }
+      if (room.players.size >= 2) {
+        socket.emit("room:error", { message: "Room is full." });
+        return;
+      }
 
-    room.addPlayer(userId, socket.id, username, 1);
-    socket.join(data.roomCode);
-    socketToRoom.set(socket.id, data.roomCode);
+      room.addPlayer(userId, socket.id, username, 1, data.weapon);
+      socket.join(data.roomCode);
+      socketToRoom.set(socket.id, data.roomCode);
 
-    const playerList = [...room.players.values()].map((p) => ({
-      id: p.id,
-      username: p.username,
-      ready: false,
-    }));
-    io.to(data.roomCode).emit("room:playerJoined", { players: playerList });
-  });
+      const playerList = [...room.players.values()].map((p) => ({
+        id: p.id,
+        username: p.username,
+        ready: false,
+      }));
+      io.to(data.roomCode).emit("room:playerJoined", { players: playerList });
+    },
+  );
 
   socket.on("room:ready", (data: { ready: boolean }) => {
     const roomId = socketToRoom.get(socket.id);
@@ -205,7 +226,7 @@ io.on("connection", (socket) => {
     }
   });
 
-    socket.on("match:enter", (data: { roomCode: string }) => {
+  socket.on("match:enter", (data: { roomCode: string }) => {
     const room = rooms.get(data.roomCode);
     if (!room) {
       socket.emit("room:error", { message: "Match not found." });
@@ -223,7 +244,10 @@ io.on("connection", (socket) => {
 
     socket.emit("match:found", {
       roomId: data.roomCode,
-      players: [...room.players.values()].map((p) => ({ id: p.id, username: p.username })),
+      players: [...room.players.values()].map((p) => ({
+        id: p.id,
+        username: p.username,
+      })),
     });
   });
 });

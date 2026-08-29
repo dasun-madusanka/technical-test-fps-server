@@ -2,6 +2,7 @@ interface QueuedPlayer {
   userId: string;
   username: string;
   socketId: string;
+  weapon?: { damage: number; fireRate: number; magazineSize: number };
 }
 
 export class Matchmaker {

@@ -25,7 +25,17 @@ export class GameRoom {
     this.tickInterval = setInterval(() => this.broadcastState(), 50);
   }
 
-  addPlayer(userId: string, socketId: string, username: string, spawnIndex: number) {
+  addPlayer(
+    userId: string,
+    socketId: string,
+    username: string,
+    spawnIndex: number,
+    weapon: { damage: number; fireRate: number; magazineSize: number } = {
+      damage: 20,
+      fireRate: 750,
+      magazineSize: 30,
+    },
+  ) {
     const spawns = [
       { x: 0, z: 10, yaw: Math.PI },
       { x: 0, z: -10, yaw: 0 },
@@ -40,11 +50,14 @@ export class GameRoom {
       z: spawn.z,
       yaw: spawn.yaw,
       health: 100,
-      ammo: MAGAZINE_SIZE,
+      ammo: weapon.magazineSize,
       kills: 0,
       deaths: 0,
       alive: true,
       lastShotTime: 0,
+      weaponDamage: weapon.damage,
+      weaponFireIntervalMs: 60000 / weapon.fireRate,
+      weaponMagazineSize: weapon.magazineSize,
     });
   }
 
@@ -67,12 +80,12 @@ export class GameRoom {
     if (!shooter || !shooter.alive || this.matchOver) return;
 
     const now = Date.now();
-    if (now - shooter.lastShotTime < FIRE_INTERVAL_MS) return;
+    if (now - shooter.lastShotTime < shooter.weaponFireIntervalMs) return;
     if (shooter.ammo <= 0) return;
 
     const dx = origin.x - shooter.x;
     const dz = origin.z - shooter.z;
-    if (Math.sqrt(dx * dx + dz * dz) > POSITION_TOLERANCE) return; // anti-teleport check
+    if (Math.sqrt(dx * dx + dz * dz) > POSITION_TOLERANCE) return;
 
     shooter.lastShotTime = now;
     shooter.ammo -= 1;
@@ -83,7 +96,13 @@ export class GameRoom {
     for (const target of this.players.values()) {
       if (target.id === shooterId || !target.alive) continue;
       const center = { x: target.x, y: target.y, z: target.z };
-      const t = raySphereIntersect(origin, dir, center, PLAYER_RADIUS, MAX_RANGE);
+      const t = raySphereIntersect(
+        origin,
+        dir,
+        center,
+        PLAYER_RADIUS,
+        MAX_RANGE,
+      );
       if (t !== null && !rayBlockedByObstacles(origin, dir, t, OBSTACLES)) {
         if (!closestHit || t < closestHit.distance) {
           closestHit = { targetId: target.id, distance: t };
@@ -92,13 +111,13 @@ export class GameRoom {
     }
 
     if (closestHit) {
-      this.applyDamage(closestHit.targetId, WEAPON_DAMAGE, shooterId);
+      this.applyDamage(closestHit.targetId, shooter.weaponDamage, shooterId);
     }
   }
 
   reload(userId: string) {
     const player = this.players.get(userId);
-    if (player) player.ammo = MAGAZINE_SIZE;
+    if (player) player.ammo = player.weaponMagazineSize;
   }
 
   private applyDamage(targetId: string, amount: number, byId: string) {
@@ -136,9 +155,14 @@ export class GameRoom {
     player.z = Math.random() > 0.5 ? 10 : -10;
     player.y = 1.6;
     player.health = 100;
-    player.ammo = MAGAZINE_SIZE;
+    player.ammo = player.weaponMagazineSize;
     player.alive = true;
-    this.emit("player:respawned", { userId, x: player.x, y: player.y, z: player.z });
+    this.emit("player:respawned", {
+      userId,
+      x: player.x,
+      y: player.y,
+      z: player.z,
+    });
   }
 
   private endMatch(winnerId: string) {
@@ -195,9 +219,13 @@ function raySphereIntersect(
   dir: Vec3,
   center: Vec3,
   radius: number,
-  maxDist: number
+  maxDist: number,
 ): number | null {
-  const oc = { x: origin.x - center.x, y: origin.y - center.y, z: origin.z - center.z };
+  const oc = {
+    x: origin.x - center.x,
+    y: origin.y - center.y,
+    z: origin.z - center.z,
+  };
   const b = oc.x * dir.x + oc.y * dir.y + oc.z * dir.z;
   const c = oc.x * oc.x + oc.y * oc.y + oc.z * oc.z - radius * radius;
   const disc = b * b - c;
@@ -211,7 +239,7 @@ function rayBlockedByObstacles(
   origin: { x: number; z: number },
   dir: { x: number; z: number },
   maxDist: number,
-  obstacles: { x: number; z: number; halfWidth: number; halfDepth: number }[]
+  obstacles: { x: number; z: number; halfWidth: number; halfDepth: number }[],
 ): boolean {
   for (const obs of obstacles) {
     const minX = obs.x - obs.halfWidth;

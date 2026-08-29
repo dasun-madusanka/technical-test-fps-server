@@ -12,6 +12,9 @@ export interface PlayerState {
   deaths: number;
   alive: boolean;
   lastShotTime: number;
+  weaponDamage: number;
+  weaponFireIntervalMs: number;
+  weaponMagazineSize: number;
 }
 
 export interface Obstacle {
