@@ -49,13 +49,18 @@ io.on("connection", (socket) => {
   socket.on(
     "queue:join",
     (data?: {
-      weapon?: { damage: number; fireRate: number; magazineSize: number };
+      inventory?: {
+        key: string;
+        damage: number;
+        fireRate: number;
+        magazineSize: number;
+      }[];
     }) => {
       matchmaker.enqueue({
         userId,
         username,
         socketId: socket.id,
-        weapon: data?.weapon,
+        inventory: data?.inventory,
       });
       const match = matchmaker.tryMatch();
 
@@ -65,8 +70,8 @@ io.on("connection", (socket) => {
         const room = new GameRoom(roomId, (event, payload) => {
           io.to(roomId).emit(event, payload);
         });
-        room.addPlayer(a.userId, a.socketId, a.username, 0, a.weapon);
-        room.addPlayer(b.userId, b.socketId, b.username, 1, b.weapon);
+        room.addPlayer(a.userId, a.socketId, a.username, 0, a.inventory);
+        room.addPlayer(b.userId, b.socketId, b.username, 1, b.inventory);
         rooms.set(roomId, room);
 
         for (const p of [a, b]) {
@@ -120,6 +125,12 @@ io.on("connection", (socket) => {
     if (roomId) rooms.get(roomId)?.reload(userId);
   });
 
+  socket.on("player:switchWeapon", (data: { slot: number }) => {
+    const roomId = socketToRoom.get(socket.id);
+    if (!roomId) return;
+    rooms.get(roomId)?.switchWeapon(userId, data.slot);
+  });
+
   socket.on("disconnect", () => {
     matchmaker.dequeue(userId);
     const roomId = socketToRoom.get(socket.id);
@@ -132,13 +143,18 @@ io.on("connection", (socket) => {
   socket.on(
     "room:create",
     (data?: {
-      weapon?: { damage: number; fireRate: number; magazineSize: number };
+      inventory?: {
+        key: string;
+        damage: number;
+        fireRate: number;
+        magazineSize: number;
+      }[];
     }) => {
       const roomCode = generateRoomCode();
       const room = new GameRoom(roomCode, (event, payload) => {
         io.to(roomCode).emit(event, payload);
       });
-      room.addPlayer(userId, socket.id, username, 0, data?.weapon);
+      room.addPlayer(userId, socket.id, username, 0, data?.inventory);
       rooms.set(roomCode, room);
       socket.join(roomCode);
       socketToRoom.set(socket.id, roomCode);
@@ -154,7 +170,12 @@ io.on("connection", (socket) => {
     "room:join",
     (data: {
       roomCode: string;
-      weapon?: { damage: number; fireRate: number; magazineSize: number };
+      inventory?: {
+        key: string;
+        damage: number;
+        fireRate: number;
+        magazineSize: number;
+      }[];
     }) => {
       const room = rooms.get(data.roomCode);
       if (!room) {
@@ -166,7 +187,7 @@ io.on("connection", (socket) => {
         return;
       }
 
-      room.addPlayer(userId, socket.id, username, 1, data.weapon);
+      room.addPlayer(userId, socket.id, username, 1, data.inventory);
       socket.join(data.roomCode);
       socketToRoom.set(socket.id, data.roomCode);
 

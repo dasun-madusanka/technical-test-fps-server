@@ -1,3 +1,10 @@
+export interface WeaponStats {
+  key: string;
+  damage: number;
+  fireIntervalMs: number;
+  magazineSize: number;
+}
+
 export interface PlayerState {
   id: string;
   socketId: string;
@@ -7,14 +14,14 @@ export interface PlayerState {
   z: number;
   yaw: number;
   health: number;
-  ammo: number;
   kills: number;
   deaths: number;
   alive: boolean;
   lastShotTime: number;
-  weaponDamage: number;
-  weaponFireIntervalMs: number;
-  weaponMagazineSize: number;
+  inventory: WeaponStats[]; // [primary, secondary, melee]
+  ammoPerWeapon: number[];
+  currentSlot: number;
+  weaponKills: number[];
 }
 
 export interface Obstacle {
