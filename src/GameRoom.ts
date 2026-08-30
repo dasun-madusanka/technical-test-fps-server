@@ -8,11 +8,60 @@ const DEFAULT_INVENTORY_INPUT = [
 ];
 const MAX_RANGE = 60;
 const SCORE_LIMIT = 10;
-const PLAYER_RADIUS = 0.5;
 const POSITION_TOLERANCE = 3; // generous, since there's no client prediction yet
+const PLAYER_RADIUS = 0.4; // horizontal hit radius (was 0.5, sphere-only)
+const EYE_HEIGHT = 1.6; // matches client PLAYER_HEIGHT
+const HEAD_MARGIN = 0.15; // eyes sit slightly below the top of the head
 
 type Vec3 = { x: number; y: number; z: number };
 export type RoomEventEmitter = (event: string, payload: unknown) => void;
+
+function rayCapsuleIntersect(
+  origin: Vec3,
+  dir: Vec3,
+  feet: Vec3,
+  head: Vec3,
+  radius: number,
+  maxDist: number,
+): number | null {
+  // Infinite vertical cylinder test in the XZ plane
+  const ox = origin.x - feet.x;
+  const oz = origin.z - feet.z;
+  const a = dir.x * dir.x + dir.z * dir.z;
+  let cylinderT: number | null = null;
+
+  if (a > 1e-9) {
+    const b = ox * dir.x + oz * dir.z;
+    const c = ox * ox + oz * oz - radius * radius;
+    const disc = b * b - a * c;
+    if (disc >= 0) {
+      const sqrtDisc = Math.sqrt(disc);
+      const t0 = (-b - sqrtDisc) / a;
+      const t1 = (-b + sqrtDisc) / a;
+      for (const t of [t0, t1]) {
+        if (t < 0 || t > maxDist) continue;
+        const y = origin.y + t * dir.y;
+        if (y >= feet.y && y <= head.y) {
+          if (cylinderT === null || t < cylinderT) cylinderT = t;
+        }
+      }
+    }
+  } else {
+    // Ray is vertical — check if it's within the cylinder's radius at all
+    if (ox * ox + oz * oz > radius * radius) return capCheck();
+  }
+
+  if (cylinderT !== null) return cylinderT;
+  return capCheck();
+
+  // Round caps at feet and head (covers shots into the top of the head / low near the feet)
+  function capCheck(): number | null {
+    const tFeet = raySphereIntersect(origin, dir, feet, radius, maxDist);
+    const tHead = raySphereIntersect(origin, dir, head, radius, maxDist);
+    if (tFeet !== null && tHead !== null) return Math.min(tFeet, tHead);
+    return tFeet ?? tHead;
+  }
+}
 
 export class GameRoom {
   id: string;
@@ -27,12 +76,17 @@ export class GameRoom {
     this.tickInterval = setInterval(() => this.broadcastState(), 50);
   }
 
-    addPlayer(
+  addPlayer(
     userId: string,
     socketId: string,
     username: string,
     spawnIndex: number,
-    inventoryInput?: { key: string; damage: number; fireRate: number; magazineSize: number }[]
+    inventoryInput?: {
+      key: string;
+      damage: number;
+      fireRate: number;
+      magazineSize: number;
+    }[],
   ) {
     const spawns = [
       { x: 0, z: 10, yaw: Math.PI },
@@ -40,7 +94,10 @@ export class GameRoom {
     ];
     const spawn = spawns[spawnIndex % spawns.length];
 
-    const source = inventoryInput && inventoryInput.length === 3 ? inventoryInput : DEFAULT_INVENTORY_INPUT;
+    const source =
+      inventoryInput && inventoryInput.length === 3
+        ? inventoryInput
+        : DEFAULT_INVENTORY_INPUT;
     const inventory = source.map((w) => ({
       key: w.key,
       damage: w.damage,
@@ -68,7 +125,7 @@ export class GameRoom {
     });
   }
 
-    switchWeapon(userId: string, slot: number) {
+  switchWeapon(userId: string, slot: number) {
     const player = this.players.get(userId);
     if (!player || !player.alive || this.matchOver) return;
     if (slot < 0 || slot > 2) return;
@@ -89,7 +146,7 @@ export class GameRoom {
     player.yaw = yaw;
   }
 
-    handleShoot(shooterId: string, origin: Vec3, direction: Vec3) {
+  handleShoot(shooterId: string, origin: Vec3, direction: Vec3) {
     const shooter = this.players.get(shooterId);
     if (!shooter || !shooter.alive || this.matchOver) return;
 
@@ -110,8 +167,16 @@ export class GameRoom {
 
     for (const target of this.players.values()) {
       if (target.id === shooterId || !target.alive) continue;
-      const center = { x: target.x, y: target.y, z: target.z };
-      const t = raySphereIntersect(origin, dir, center, PLAYER_RADIUS, MAX_RANGE);
+      const feetY = target.y - EYE_HEIGHT;
+      const headY = target.y + HEAD_MARGIN;
+      const t = rayCapsuleIntersect(
+        origin,
+        dir,
+        { x: target.x, y: feetY, z: target.z },
+        { x: target.x, y: headY, z: target.z },
+        PLAYER_RADIUS,
+        MAX_RANGE,
+      );
       if (t !== null && !rayBlockedByObstacles(origin, dir, t, OBSTACLES)) {
         if (!closestHit || t < closestHit.distance) {
           closestHit = { targetId: target.id, distance: t };
@@ -124,13 +189,14 @@ export class GameRoom {
     }
   }
 
-    reload(userId: string) {
+  reload(userId: string) {
     const player = this.players.get(userId);
     if (!player) return;
-    player.ammoPerWeapon[player.currentSlot] = player.inventory[player.currentSlot].magazineSize;
+    player.ammoPerWeapon[player.currentSlot] =
+      player.inventory[player.currentSlot].magazineSize;
   }
 
-    private applyDamage(targetId: string, amount: number, byId: string) {
+  private applyDamage(targetId: string, amount: number, byId: string) {
     const target = this.players.get(targetId);
     const shooter = this.players.get(byId);
     if (!target || !target.alive) return;
@@ -145,7 +211,11 @@ export class GameRoom {
         shooter.weaponKills[shooter.currentSlot] += 1;
       }
 
-      this.emit("player:eliminated", { targetId, byId, byUsername: shooter?.username });
+      this.emit("player:eliminated", {
+        targetId,
+        byId,
+        byUsername: shooter?.username,
+      });
 
       if (shooter && shooter.kills >= SCORE_LIMIT) {
         this.endMatch(shooter.id);
@@ -157,7 +227,7 @@ export class GameRoom {
     }
   }
 
-    private respawn(userId: string) {
+  private respawn(userId: string) {
     const player = this.players.get(userId);
     if (!player || this.matchOver) return;
     player.x = Math.random() > 0.5 ? 10 : -10;
@@ -167,10 +237,15 @@ export class GameRoom {
     player.currentSlot = 0;
     player.ammoPerWeapon = player.inventory.map((w) => w.magazineSize);
     player.alive = true;
-    this.emit("player:respawned", { userId, x: player.x, y: player.y, z: player.z });
+    this.emit("player:respawned", {
+      userId,
+      x: player.x,
+      y: player.y,
+      z: player.z,
+    });
   }
 
-    private endMatch(winnerId: string) {
+  private endMatch(winnerId: string) {
     this.matchOver = true;
     const results = [...this.players.values()].map((p) => ({
       userId: p.id,
@@ -178,7 +253,10 @@ export class GameRoom {
       kills: p.kills,
       deaths: p.deaths,
       won: p.id === winnerId,
-      weapons: p.inventory.map((w, i) => ({ weaponKey: w.key, kills: p.weaponKills[i] })),
+      weapons: p.inventory.map((w, i) => ({
+        weaponKey: w.key,
+        kills: p.weaponKills[i],
+      })),
     }));
     this.emit("match:end", { winnerId, results });
     clearInterval(this.tickInterval);
@@ -190,7 +268,7 @@ export class GameRoom {
     if (remaining.length === 1) this.endMatch(remaining[0].id);
   }
 
-    private broadcastState() {
+  private broadcastState() {
     if (this.matchOver) return;
     const snapshot = [...this.players.values()].map((p) => ({
       id: p.id,
