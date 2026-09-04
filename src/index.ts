@@ -84,10 +84,14 @@ io.on("connection", (socket) => {
 
         io.to(roomId).emit("match:found", {
           roomId,
-          players: [
-            { id: a.userId, username: a.username },
-            { id: b.userId, username: b.username },
-          ],
+          players: [...room.players.values()].map((p) => ({
+            id: p.id,
+            username: p.username,
+            x: p.x,
+            y: p.y,
+            z: p.z,
+            yaw: p.yaw,
+          })),
         });
       } else {
         socket.emit("queue:waiting", { position: matchmaker.queueLength() });
@@ -216,6 +220,10 @@ io.on("connection", (socket) => {
       players: [...room.players.values()].map((p) => ({
         id: p.id,
         username: p.username,
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        yaw: p.yaw,
       })),
     });
   });
@@ -268,6 +276,10 @@ io.on("connection", (socket) => {
       players: [...room.players.values()].map((p) => ({
         id: p.id,
         username: p.username,
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        yaw: p.yaw,
       })),
     });
   });

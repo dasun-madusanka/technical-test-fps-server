@@ -1,5 +1,12 @@
 import { PlayerState } from "./types";
-import { OBSTACLES } from "./obstacles";
+import {
+  OBSTACLES,
+  ARENA_SPAWN_POINTS,
+  BOUNDARY_LIMIT,
+  isRayBlockedByColliders,
+  getSafeSpawnPoint,
+  EYE_HEIGHT,
+} from "./obstacles";
 
 const DEFAULT_INVENTORY_INPUT = [
   { key: "rifle", damage: 20, fireRate: 750, magazineSize: 30 },
@@ -10,7 +17,6 @@ const MAX_RANGE = 60;
 const SCORE_LIMIT = 10;
 const POSITION_TOLERANCE = 3; // generous, since there's no client prediction yet
 const PLAYER_RADIUS = 0.4; // horizontal hit radius (was 0.5, sphere-only)
-const EYE_HEIGHT = 1.6; // matches client PLAYER_HEIGHT
 const HEAD_MARGIN = 0.15; // eyes sit slightly below the top of the head
 
 type Vec3 = { x: number; y: number; z: number };
@@ -88,11 +94,7 @@ export class GameRoom {
       magazineSize: number;
     }[],
   ) {
-    const spawns = [
-      { x: 0, z: 10, yaw: Math.PI },
-      { x: 0, z: -10, yaw: 0 },
-    ];
-    const spawn = spawns[spawnIndex % spawns.length];
+    const spawn = ARENA_SPAWN_POINTS[spawnIndex % ARENA_SPAWN_POINTS.length];
 
     const source =
       inventoryInput && inventoryInput.length === 3
@@ -110,7 +112,7 @@ export class GameRoom {
       socketId,
       username,
       x: spawn.x,
-      y: 1.6,
+      y: EYE_HEIGHT,
       z: spawn.z,
       yaw: spawn.yaw,
       health: 100,
@@ -139,7 +141,7 @@ export class GameRoom {
   updateMovement(userId: string, x: number, y: number, z: number, yaw: number) {
     const player = this.players.get(userId);
     if (!player || !player.alive || this.matchOver) return;
-    const bound = 14.4;
+    const bound = BOUNDARY_LIMIT;
     player.x = Math.max(-bound, Math.min(bound, x));
     player.y = y;
     player.z = Math.max(-bound, Math.min(bound, z));
@@ -177,7 +179,7 @@ export class GameRoom {
         PLAYER_RADIUS,
         MAX_RANGE,
       );
-      if (t !== null && !rayBlockedByObstacles(origin, dir, t, OBSTACLES)) {
+      if (t !== null && !isRayBlockedByColliders(origin, dir, t, OBSTACLES)) {
         if (!closestHit || t < closestHit.distance) {
           closestHit = { targetId: target.id, distance: t };
         }
@@ -230,9 +232,20 @@ export class GameRoom {
   private respawn(userId: string) {
     const player = this.players.get(userId);
     if (!player || this.matchOver) return;
-    player.x = Math.random() > 0.5 ? 10 : -10;
-    player.z = Math.random() > 0.5 ? 10 : -10;
-    player.y = 1.6;
+
+    const otherPlayers = [...this.players.values()].filter(
+      (p) => p.id !== userId && p.alive,
+    );
+    const avoid =
+      otherPlayers.length > 0
+        ? { x: otherPlayers[0].x, z: otherPlayers[0].z }
+        : undefined;
+    const safeSpawn = getSafeSpawnPoint(avoid);
+
+    player.x = safeSpawn.x;
+    player.y = EYE_HEIGHT;
+    player.z = safeSpawn.z;
+    player.yaw = safeSpawn.yaw;
     player.health = 100;
     player.currentSlot = 0;
     player.ammoPerWeapon = player.inventory.map((w) => w.magazineSize);
@@ -242,6 +255,7 @@ export class GameRoom {
       x: player.x,
       y: player.y,
       z: player.z,
+      yaw: player.yaw,
     });
   }
 
@@ -320,43 +334,3 @@ function raySphereIntersect(
   return t;
 }
 
-function rayBlockedByObstacles(
-  origin: { x: number; z: number },
-  dir: { x: number; z: number },
-  maxDist: number,
-  obstacles: { x: number; z: number; halfWidth: number; halfDepth: number }[],
-): boolean {
-  for (const obs of obstacles) {
-    const minX = obs.x - obs.halfWidth;
-    const maxX = obs.x + obs.halfWidth;
-    const minZ = obs.z - obs.halfDepth;
-    const maxZ = obs.z + obs.halfDepth;
-    let tmin = 0;
-    let tmax = maxDist;
-
-    if (Math.abs(dir.x) < 1e-6) {
-      if (origin.x < minX || origin.x > maxX) continue;
-    } else {
-      let t1 = (minX - origin.x) / dir.x;
-      let t2 = (maxX - origin.x) / dir.x;
-      if (t1 > t2) [t1, t2] = [t2, t1];
-      tmin = Math.max(tmin, t1);
-      tmax = Math.min(tmax, t2);
-      if (tmin > tmax) continue;
-    }
-
-    if (Math.abs(dir.z) < 1e-6) {
-      if (origin.z < minZ || origin.z > maxZ) continue;
-    } else {
-      let t1 = (minZ - origin.z) / dir.z;
-      let t2 = (maxZ - origin.z) / dir.z;
-      if (t1 > t2) [t1, t2] = [t2, t1];
-      tmin = Math.max(tmin, t1);
-      tmax = Math.min(tmax, t2);
-      if (tmin > tmax) continue;
-    }
-
-    if (tmin <= tmax && tmax >= 0) return true;
-  }
-  return false;
-}

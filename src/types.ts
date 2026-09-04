@@ -24,9 +24,22 @@ export interface PlayerState {
   weaponKills: number[];
 }
 
-export interface Obstacle {
-  x: number;
-  z: number;
-  halfWidth: number;
-  halfDepth: number;
-}
+export type ColliderShape =
+  | {
+      type: "circle";
+      x: number;
+      z: number;
+      radius: number;
+      height?: number;
+    }
+  | {
+      type: "box";
+      x: number;
+      z: number;
+      halfWidth: number;
+      halfDepth: number;
+      rotationY: number;
+      height?: number;
+    };
+
+export type Obstacle = ColliderShape;
