@@ -74,6 +74,7 @@ export class GameRoom {
   players: Map<string, PlayerState> = new Map();
   isPublicArena = false;
   isDestroyed = false;
+  hasStarted = false;
   private emit: RoomEventEmitter;
   private matchOver = false;
   private tickInterval: NodeJS.Timeout;
@@ -82,7 +83,12 @@ export class GameRoom {
     this.id = id;
     this.emit = emit;
     this.isPublicArena = isPublicArena;
+    if (isPublicArena) this.hasStarted = true;
     this.tickInterval = setInterval(() => this.broadcastState(), 50);
+  }
+
+  startMatch() {
+    this.hasStarted = true;
   }
 
   addPlayer(
@@ -97,8 +103,6 @@ export class GameRoom {
       magazineSize: number;
     }[],
   ) {
-    const spawn = ARENA_SPAWN_POINTS[spawnIndex % ARENA_SPAWN_POINTS.length];
-
     const source =
       inventoryInput && inventoryInput.length === 3
         ? inventoryInput
@@ -109,6 +113,19 @@ export class GameRoom {
       fireIntervalMs: 60000 / w.fireRate,
       magazineSize: w.magazineSize,
     }));
+
+    const existing = this.players.get(userId);
+    if (existing) {
+      existing.socketId = socketId;
+      existing.username = username;
+      if (inventoryInput && inventoryInput.length === 3) {
+        existing.inventory = inventory;
+        existing.ammoPerWeapon = inventory.map((w) => w.magazineSize);
+      }
+      return;
+    }
+
+    const spawn = ARENA_SPAWN_POINTS[spawnIndex % ARENA_SPAWN_POINTS.length];
 
     this.players.set(userId, {
       id: userId,
@@ -307,7 +324,11 @@ export class GameRoom {
       return;
     }
     const remaining = [...this.players.values()].filter((p) => p.id !== userId);
-    if (remaining.length === 1) this.endMatch(remaining[0].id);
+    if (this.hasStarted && remaining.length === 1) {
+      this.endMatch(remaining[0].id);
+    } else {
+      this.emit("room:playerLeft", { userId });
+    }
   }
 
   private broadcastState() {

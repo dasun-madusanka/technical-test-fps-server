@@ -17,6 +17,12 @@ const io = new Server(server, {
 });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/stats", (_req, res) =>
+  res.json({
+    onlinePlayers: io.engine.clientsCount,
+    activeRooms: rooms.size,
+  }),
+);
 
 interface AuthedSocketData {
   userId: string;
@@ -26,6 +32,29 @@ interface AuthedSocketData {
 const rooms = new Map<string, GameRoom>();
 const socketToRoom = new Map<string, string>();
 const matchmaker = new Matchmaker();
+
+function leaveCurrentRoom(socket: any, exceptRoomId?: string) {
+  const currentRoomId = socketToRoom.get(socket.id);
+  if (!currentRoomId || currentRoomId === exceptRoomId) return;
+  socket.leave(currentRoomId);
+  socketToRoom.delete(socket.id);
+  const room = rooms.get(currentRoomId);
+  if (room) {
+    const { userId } = socket.data as AuthedSocketData;
+    room.handleDisconnect(userId);
+    if (room.isPublicArena && room.players.size === 0) {
+      setTimeout(() => {
+        if (room.players.size === 0) {
+          room.destroy();
+          rooms.delete(currentRoomId);
+        }
+      }, 30000);
+    } else if (!room.isPublicArena && room.players.size === 0) {
+      room.destroy();
+      rooms.delete(currentRoomId);
+    }
+  }
+}
 
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
@@ -56,6 +85,7 @@ io.on("connection", (socket) => {
         magazineSize: number;
       }[];
     }) => {
+      leaveCurrentRoom(socket);
       matchmaker.enqueue({
         userId,
         username,
@@ -70,6 +100,7 @@ io.on("connection", (socket) => {
         const room = new GameRoom(roomId, (event, payload) => {
           io.to(roomId).emit(event, payload);
         });
+        room.startMatch();
         room.addPlayer(a.userId, a.socketId, a.username, 0, a.inventory);
         room.addPlayer(b.userId, b.socketId, b.username, 1, b.inventory);
         rooms.set(roomId, room);
@@ -77,6 +108,7 @@ io.on("connection", (socket) => {
         for (const p of [a, b]) {
           const s = io.sockets.sockets.get(p.socketId);
           if (s) {
+            leaveCurrentRoom(s, roomId);
             s.join(roomId);
             socketToRoom.set(p.socketId, roomId);
           }
@@ -115,15 +147,26 @@ io.on("connection", (socket) => {
       let publicRoom: GameRoom | null = null;
       let publicRoomId: string | null = null;
 
-      for (const [id, room] of rooms) {
-        if (
-          room.isPublicArena &&
-          !room.isDestroyed &&
-          room.players.size < MAX_ARENA_PLAYERS
-        ) {
-          publicRoom = room;
-          publicRoomId = id;
-          break;
+      const curId = socketToRoom.get(socket.id);
+      if (curId) {
+        const r = rooms.get(curId);
+        if (r && r.isPublicArena && !r.isDestroyed && r.players.size <= MAX_ARENA_PLAYERS) {
+          publicRoom = r;
+          publicRoomId = curId;
+        }
+      }
+
+      if (!publicRoom) {
+        for (const [id, room] of rooms) {
+          if (
+            room.isPublicArena &&
+            !room.isDestroyed &&
+            (room.players.has(userId) || room.players.size < MAX_ARENA_PLAYERS)
+          ) {
+            publicRoom = room;
+            publicRoomId = id;
+            break;
+          }
         }
       }
 
@@ -139,7 +182,11 @@ io.on("connection", (socket) => {
         rooms.set(publicRoomId, publicRoom);
       }
 
-      const spawnIndex = publicRoom.players.size;
+      leaveCurrentRoom(socket, publicRoomId);
+
+      const spawnIndex = publicRoom.players.has(userId)
+        ? 0
+        : publicRoom.players.size;
       publicRoom.addPlayer(
         userId,
         socket.id,
@@ -200,22 +247,7 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     matchmaker.dequeue(userId);
-    const roomId = socketToRoom.get(socket.id);
-    if (roomId) {
-      const room = rooms.get(roomId);
-      if (room) {
-        room.handleDisconnect(userId);
-        if (room.isPublicArena && room.players.size === 0) {
-          setTimeout(() => {
-            if (room.players.size === 0) {
-              room.destroy();
-              rooms.delete(roomId);
-            }
-          }, 30000);
-        }
-      }
-      socketToRoom.delete(socket.id);
-    }
+    leaveCurrentRoom(socket);
   });
 
   socket.on(
@@ -228,6 +260,7 @@ io.on("connection", (socket) => {
         magazineSize: number;
       }[];
     }) => {
+      leaveCurrentRoom(socket);
       const roomCode = generateRoomCode();
       const room = new GameRoom(roomCode, (event, payload) => {
         io.to(roomCode).emit(event, payload);
@@ -260,12 +293,15 @@ io.on("connection", (socket) => {
         socket.emit("room:error", { message: "Room not found." });
         return;
       }
-      if (room.players.size >= 2) {
+      if (!room.players.has(userId) && room.players.size >= 2) {
         socket.emit("room:error", { message: "Room is full." });
         return;
       }
 
-      room.addPlayer(userId, socket.id, username, 1, data.inventory);
+      leaveCurrentRoom(socket, data.roomCode);
+
+      const spawnIndex = room.players.has(userId) ? 0 : room.players.size;
+      room.addPlayer(userId, socket.id, username, spawnIndex, data.inventory);
       socket.join(data.roomCode);
       socketToRoom.set(socket.id, data.roomCode);
 
@@ -289,6 +325,7 @@ io.on("connection", (socket) => {
     if (!roomId) return;
     const room = rooms.get(roomId);
     if (!room || room.players.size < 2) return;
+    room.startMatch();
     io.to(roomId).emit("match:found", {
       roomId,
       players: [...room.players.values()].map((p) => ({
@@ -313,20 +350,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("room:leave", () => {
-    const roomId = socketToRoom.get(socket.id);
-    if (!roomId) return;
-    const room = rooms.get(roomId);
-    if (room) {
-      room.removePlayer(userId);
-      socket.leave(roomId);
-      socketToRoom.delete(socket.id);
-      if (room.players.size === 0) {
-        room.destroy();
-        rooms.delete(roomId);
-      } else {
-        io.to(roomId).emit("room:playerLeft", { userId });
-      }
-    }
+    leaveCurrentRoom(socket);
   });
 
   socket.on("match:enter", (data: { roomCode: string }) => {
@@ -340,6 +364,8 @@ io.on("connection", (socket) => {
       socket.emit("room:error", { message: "You are not part of this match." });
       return;
     }
+
+    leaveCurrentRoom(socket, data.roomCode);
 
     player.socketId = socket.id;
     socket.join(data.roomCode);
