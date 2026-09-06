@@ -7,21 +7,29 @@ export interface SpawnPoint {
   yaw: number;
 }
 
-export const ARENA_HALF_SIZE = 15;
-export const BOUNDARY_LIMIT = 14.4;
+export const ARENA_HALF_SIZE = 24;
+export const BOUNDARY_LIMIT = 23.4;
 export const PLAYER_RADIUS = 0.4;
 export const EYE_HEIGHT = 1.6;
 
-// Tactical Ground Spawn Points matching client
+// Tactical Ground Spawn Points matching client 1:1
 export const ARENA_SPAWN_POINTS: SpawnPoint[] = [
-  { x: 0, y: EYE_HEIGHT, z: 11.5, yaw: Math.PI },       // North Main Street
-  { x: 0, y: EYE_HEIGHT, z: -11.5, yaw: 0 },            // South Main Street
-  { x: 11.5, y: EYE_HEIGHT, z: 0, yaw: -Math.PI / 2 },  // East Crossway
-  { x: -11.5, y: EYE_HEIGHT, z: 0, yaw: Math.PI / 2 },  // West Crossway
-  { x: 10.5, y: EYE_HEIGHT, z: 9.5, yaw: -Math.PI * 0.75 }, // North-East Plaza
-  { x: -10.5, y: EYE_HEIGHT, z: -9.5, yaw: Math.PI * 0.25 }, // South-West Plaza
-  { x: -5.0, y: EYE_HEIGHT, z: 5.0, yaw: Math.PI * 0.5 },    // West Courtyard
-  { x: 5.0, y: EYE_HEIGHT, z: -5.0, yaw: -Math.PI * 0.5 },   // East Courtyard
+  { x: 0, y: EYE_HEIGHT, z: 19.5, yaw: Math.PI },       // North Outpost
+  { x: 0, y: EYE_HEIGHT, z: -19.5, yaw: 0 },            // South Outpost
+  { x: 19.5, y: EYE_HEIGHT, z: 0, yaw: -Math.PI / 2 },  // East Outpost
+  { x: -19.5, y: EYE_HEIGHT, z: 0, yaw: Math.PI / 2 },  // West Outpost
+  { x: 14.5, y: EYE_HEIGHT, z: 14.5, yaw: -Math.PI * 0.75 }, // North-East Sector
+  { x: -14.5, y: EYE_HEIGHT, z: -14.5, yaw: Math.PI * 0.25 }, // South-West Sector
+  { x: -14.5, y: EYE_HEIGHT, z: 14.5, yaw: Math.PI * 0.75 },  // North-West Sector
+  { x: 14.5, y: EYE_HEIGHT, z: -14.5, yaw: -Math.PI * 0.25 }, // South-East Sector
+  { x: 0, y: EYE_HEIGHT, z: 10.5, yaw: Math.PI },       // North Inner Avenue
+  { x: 0, y: EYE_HEIGHT, z: -10.5, yaw: 0 },            // South Inner Avenue
+  { x: 10.5, y: EYE_HEIGHT, z: 0, yaw: -Math.PI / 2 },  // East Inner Avenue
+  { x: -10.5, y: EYE_HEIGHT, z: 0, yaw: Math.PI / 2 },  // West Inner Avenue
+  { x: -7.5, y: EYE_HEIGHT, z: 7.5, yaw: Math.PI * 0.5 },    // West Plaza
+  { x: 7.5, y: EYE_HEIGHT, z: -7.5, yaw: -Math.PI * 0.5 },   // East Plaza
+  { x: 7.5, y: EYE_HEIGHT, z: 7.5, yaw: -Math.PI * 0.75 },   // North-East Courtyard
+  { x: -7.5, y: EYE_HEIGHT, z: -7.5, yaw: Math.PI * 0.25 },  // South-West Courtyard
 ];
 
 // Tactical Solid Colliders matching client 1:1
@@ -88,6 +96,31 @@ export const ARENA_COLLIDERS: ColliderShape[] = [
   { type: "circle", x: -10.0, z: -3.0, radius: 0.25, height: 6.6 },
   { type: "circle", x: 3.6, z: -6.5, radius: 0.25, height: 0.8 },
   { type: "circle", x: -3.6, z: 6.5, radius: 0.25, height: 0.8 },
+
+  // --- Outer District Tactical Covers ---
+  // North Outer District
+  { type: "box", x: 12.0, z: 18.0, halfWidth: 2.85, halfDepth: 1.3, rotationY: 0, height: 2.6 },
+  { type: "box", x: -12.0, z: 18.0, halfWidth: 1.2, halfDepth: 2.55, rotationY: 1.8, height: 1.9 },
+  { type: "circle", x: -18.0, z: 18.0, radius: 1.45, height: 9.4 },
+  { type: "box", x: -3.5, z: 17.0, halfWidth: 0.85, halfDepth: 0.45, rotationY: 0, height: 1.15 },
+  { type: "circle", x: 3.5, z: 17.0, radius: 0.42, height: 1.15 },
+
+  // South Outer District
+  { type: "box", x: -12.0, z: -18.0, halfWidth: 2.85, halfDepth: 1.3, rotationY: 0, height: 2.6 },
+  { type: "box", x: 12.0, z: -18.0, halfWidth: 1.3, halfDepth: 2.7, rotationY: -1.2, height: 1.8 },
+  { type: "box", x: 18.0, z: -18.0, halfWidth: 0.5, halfDepth: 2.8, rotationY: 0, height: 5.0 },
+  { type: "box", x: 3.5, z: -17.0, halfWidth: 0.8, halfDepth: 0.4, rotationY: 0, height: 0.85 },
+  { type: "circle", x: -3.5, z: -17.0, radius: 0.42, height: 1.15 },
+
+  // East Outer District
+  { type: "box", x: 18.0, z: 8.0, halfWidth: 1.3, halfDepth: 2.85, rotationY: Math.PI / 2, height: 2.6 },
+  { type: "box", x: 18.0, z: -8.0, halfWidth: 1.35, halfDepth: 2.6, rotationY: 0, height: 2.9 },
+  { type: "box", x: 17.0, z: 0.0, halfWidth: 0.55, halfDepth: 0.65, rotationY: 0, height: 0.5 },
+
+  // West Outer District
+  { type: "box", x: -18.0, z: -8.0, halfWidth: 1.3, halfDepth: 2.85, rotationY: Math.PI / 2, height: 2.6 },
+  { type: "box", x: -18.0, z: 8.0, halfWidth: 1.25, halfDepth: 2.65, rotationY: 0.5, height: 2.0 },
+  { type: "box", x: -17.0, z: 0.0, halfWidth: 0.55, halfDepth: 0.65, rotationY: 0.4, height: 0.5 },
 ];
 
 export const OBSTACLES = ARENA_COLLIDERS;

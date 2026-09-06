@@ -16,8 +16,8 @@ const DEFAULT_INVENTORY_INPUT = [
 const MAX_RANGE = 60;
 const SCORE_LIMIT = 10;
 const POSITION_TOLERANCE = 3; // generous, since there's no client prediction yet
-const PLAYER_RADIUS = 0.4; // horizontal hit radius (was 0.5, sphere-only)
-const HEAD_MARGIN = 0.15; // eyes sit slightly below the top of the head
+const PLAYER_RADIUS = 0.42; // horizontal hit radius for 1.54m voxel character
+const CHARACTER_HEIGHT = 1.62; // 1.54m character height with head margin
 
 type Vec3 = { x: number; y: number; z: number };
 export type RoomEventEmitter = (event: string, payload: unknown) => void;
@@ -72,13 +72,16 @@ function rayCapsuleIntersect(
 export class GameRoom {
   id: string;
   players: Map<string, PlayerState> = new Map();
+  isPublicArena = false;
+  isDestroyed = false;
   private emit: RoomEventEmitter;
   private matchOver = false;
   private tickInterval: NodeJS.Timeout;
 
-  constructor(id: string, emit: RoomEventEmitter) {
+  constructor(id: string, emit: RoomEventEmitter, isPublicArena = false) {
     this.id = id;
     this.emit = emit;
+    this.isPublicArena = isPublicArena;
     this.tickInterval = setInterval(() => this.broadcastState(), 50);
   }
 
@@ -169,8 +172,9 @@ export class GameRoom {
 
     for (const target of this.players.values()) {
       if (target.id === shooterId || !target.alive) continue;
-      const feetY = target.y - EYE_HEIGHT;
-      const headY = target.y + HEAD_MARGIN;
+      const jumpOffset = Math.max(0, target.y - EYE_HEIGHT);
+      const feetY = jumpOffset;
+      const headY = jumpOffset + CHARACTER_HEIGHT;
       const t = rayCapsuleIntersect(
         origin,
         dir,
@@ -217,7 +221,26 @@ export class GameRoom {
         targetId,
         byId,
         byUsername: shooter?.username,
+        targetUsername: target.username,
       });
+
+      if (this.isPublicArena) {
+        // Continuous Public Arena: 30 kills round milestone with rolling scores
+        if (shooter && shooter.kills >= 30) {
+          this.emit("arena:winner", {
+            winnerId: shooter.id,
+            winnerUsername: shooter.username,
+          });
+          setTimeout(() => {
+            for (const p of this.players.values()) {
+              p.kills = 0;
+              p.deaths = 0;
+            }
+          }, 4000);
+        }
+        setTimeout(() => this.respawn(targetId), 3000);
+        return;
+      }
 
       if (shooter && shooter.kills >= SCORE_LIMIT) {
         this.endMatch(shooter.id);
@@ -278,6 +301,11 @@ export class GameRoom {
 
   handleDisconnect(userId: string) {
     if (this.matchOver) return;
+    this.removePlayer(userId);
+    if (this.isPublicArena) {
+      this.emit("room:playerLeft", { userId });
+      return;
+    }
     const remaining = [...this.players.values()].filter((p) => p.id !== userId);
     if (remaining.length === 1) this.endMatch(remaining[0].id);
   }
@@ -302,6 +330,7 @@ export class GameRoom {
   }
 
   destroy() {
+    this.isDestroyed = true;
     clearInterval(this.tickInterval);
   }
 }

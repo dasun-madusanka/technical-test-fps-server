@@ -79,6 +79,42 @@ io.on("connection", (socket) => {
         }
     });
     socket.on("queue:leave", () => matchmaker.dequeue(userId));
+    socket.on("arena:join", (data) => {
+        const MAX_ARENA_PLAYERS = 8;
+        let publicRoom = null;
+        let publicRoomId = null;
+        for (const [id, room] of rooms) {
+            if (room.isPublicArena &&
+                !room.isDestroyed &&
+                room.players.size < MAX_ARENA_PLAYERS) {
+                publicRoom = room;
+                publicRoomId = id;
+                break;
+            }
+        }
+        if (!publicRoom || !publicRoomId) {
+            publicRoomId = `public_arena_${Date.now()}`;
+            publicRoom = new GameRoom_1.GameRoom(publicRoomId, (event, payload) => {
+                io.to(publicRoomId).emit(event, payload);
+            }, true);
+            rooms.set(publicRoomId, publicRoom);
+        }
+        const spawnIndex = publicRoom.players.size;
+        publicRoom.addPlayer(userId, socket.id, username, spawnIndex, data?.inventory);
+        socket.join(publicRoomId);
+        socketToRoom.set(socket.id, publicRoomId);
+        socket.emit("match:found", {
+            roomId: publicRoomId,
+            players: [...publicRoom.players.values()].map((p) => ({
+                id: p.id,
+                username: p.username,
+                x: p.x,
+                y: p.y,
+                z: p.z,
+                yaw: p.yaw,
+            })),
+        });
+    });
     socket.on("player:move", (data) => {
         const roomId = socketToRoom.get(socket.id);
         if (!roomId)
@@ -108,7 +144,18 @@ io.on("connection", (socket) => {
         matchmaker.dequeue(userId);
         const roomId = socketToRoom.get(socket.id);
         if (roomId) {
-            rooms.get(roomId)?.handleDisconnect(userId);
+            const room = rooms.get(roomId);
+            if (room) {
+                room.handleDisconnect(userId);
+                if (room.isPublicArena && room.players.size === 0) {
+                    setTimeout(() => {
+                        if (room.players.size === 0) {
+                            room.destroy();
+                            rooms.delete(roomId);
+                        }
+                    }, 30000);
+                }
+            }
             socketToRoom.delete(socket.id);
         }
     });
