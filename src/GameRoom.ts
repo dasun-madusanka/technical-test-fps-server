@@ -99,6 +99,10 @@ export class GameRoom {
     return this.matchOver;
   }
 
+  get playerCount(): number {
+    return this.players.size;
+  }
+
   getRemainingTime(): number {
     if (this.roundDurationSec <= 0) return 0;
     const elapsed = Math.floor((Date.now() - this.roundStartTime) / 1000);
@@ -211,8 +215,8 @@ export class GameRoom {
     for (const target of this.players.values()) {
       if (target.id === shooterId || !target.alive) continue;
       const jumpOffset = Math.max(0, target.y - EYE_HEIGHT);
-      const feetY = jumpOffset;
-      const headY = jumpOffset + CHARACTER_HEIGHT;
+      const feetY = jumpOffset + PLAYER_RADIUS;
+      const headY = Math.max(feetY, jumpOffset + CHARACTER_HEIGHT - PLAYER_RADIUS);
       const t = rayCapsuleIntersect(
         origin,
         dir,
@@ -343,9 +347,6 @@ export class GameRoom {
     clearInterval(this.tickInterval);
   }
 
-  cleanUp() {
-    clearInterval(this.tickInterval);
-  }
 
   handleDisconnect(userId: string) {
     if (this.matchOver) return;
@@ -395,7 +396,12 @@ export class GameRoom {
 
   destroy() {
     this.isDestroyed = true;
+    this.matchOver = true;
     clearInterval(this.tickInterval);
+  }
+
+  cleanUp() {
+    this.destroy();
   }
 }
 

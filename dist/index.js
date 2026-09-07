@@ -36,15 +36,7 @@ function leaveCurrentRoom(socket, exceptRoomId) {
     if (room) {
         const { userId } = socket.data;
         room.handleDisconnect(userId);
-        if (room.isPublicArena && room.players.size === 0) {
-            setTimeout(() => {
-                if (room.players.size === 0) {
-                    room.destroy();
-                    rooms.delete(currentRoomId);
-                }
-            }, 30000);
-        }
-        else if (!room.isPublicArena && room.players.size === 0) {
+        if (room.players.size === 0) {
             room.destroy();
             rooms.delete(currentRoomId);
         }
@@ -121,6 +113,7 @@ io.on("connection", (socket) => {
                 r.isPublicArena &&
                 !r.isDestroyed &&
                 !r.isMatchOver &&
+                r.players.size > 0 &&
                 r.players.size <= MAX_ARENA_PLAYERS) {
                 publicRoom = r;
                 publicRoomId = curId;
@@ -131,6 +124,7 @@ io.on("connection", (socket) => {
                 if (room.isPublicArena &&
                     !room.isDestroyed &&
                     !room.isMatchOver &&
+                    room.players.size > 0 &&
                     (room.players.has(userId) || room.players.size < MAX_ARENA_PLAYERS)) {
                     publicRoom = room;
                     publicRoomId = id;
