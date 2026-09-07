@@ -9,6 +9,7 @@ const DEFAULT_INVENTORY_INPUT = [
 ];
 const MAX_RANGE = 60;
 const SCORE_LIMIT = 10;
+const ARENA_ROUND_DURATION_SEC = 300; // 5 minute standard round limit for Public Arena
 const POSITION_TOLERANCE = 3; // generous, since there's no client prediction yet
 const PLAYER_RADIUS = 0.42; // horizontal hit radius for 1.54m voxel character
 const CHARACTER_HEIGHT = 1.62; // 1.54m character height with head margin
@@ -31,8 +32,8 @@ function rayCapsuleIntersect(origin, dir, feet, head, radius, maxDist) {
                     continue;
                 const y = origin.y + t * dir.y;
                 if (y >= feet.y && y <= head.y) {
-                    if (cylinderT === null || t < cylinderT)
-                        cylinderT = t;
+                    cylinderT = t;
+                    break;
                 }
             }
         }
@@ -60,16 +61,33 @@ class GameRoom {
         this.isPublicArena = false;
         this.isDestroyed = false;
         this.hasStarted = false;
+        this.roundDurationSec = 0;
+        this.roundStartTime = 0;
         this.matchOver = false;
         this.id = id;
         this.emit = emit;
         this.isPublicArena = isPublicArena;
-        if (isPublicArena)
+        if (isPublicArena) {
             this.hasStarted = true;
+            this.roundDurationSec = ARENA_ROUND_DURATION_SEC;
+            this.roundStartTime = Date.now();
+        }
         this.tickInterval = setInterval(() => this.broadcastState(), 50);
+    }
+    get isMatchOver() {
+        return this.matchOver;
+    }
+    getRemainingTime() {
+        if (this.roundDurationSec <= 0)
+            return 0;
+        const elapsed = Math.floor((Date.now() - this.roundStartTime) / 1000);
+        return Math.max(0, this.roundDurationSec - elapsed);
     }
     startMatch() {
         this.hasStarted = true;
+        if (!this.isPublicArena) {
+            this.roundStartTime = Date.now();
+        }
     }
     addPlayer(userId, socketId, username, spawnIndex, inventoryInput) {
         const source = inventoryInput && inventoryInput.length === 3
@@ -195,18 +213,9 @@ class GameRoom {
                 targetUsername: target.username,
             });
             if (this.isPublicArena) {
-                // Continuous Public Arena: 30 kills round milestone with rolling scores
                 if (shooter && shooter.kills >= 30) {
-                    this.emit("arena:winner", {
-                        winnerId: shooter.id,
-                        winnerUsername: shooter.username,
-                    });
-                    setTimeout(() => {
-                        for (const p of this.players.values()) {
-                            p.kills = 0;
-                            p.deaths = 0;
-                        }
-                    }, 4000);
+                    this.endMatch(shooter.id);
+                    return;
                 }
                 setTimeout(() => this.respawn(targetId), 3000);
                 return;
@@ -247,19 +256,34 @@ class GameRoom {
         });
     }
     endMatch(winnerId) {
+        if (this.matchOver)
+            return;
         this.matchOver = true;
-        const results = [...this.players.values()].map((p) => ({
+        const sorted = [...this.players.values()].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+        const winner = winnerId
+            ? sorted.find((p) => p.id === winnerId) || sorted[0]
+            : sorted[0];
+        const actualWinnerId = winner?.id || "";
+        const results = sorted.map((p, idx) => ({
             userId: p.id,
             username: p.username,
             kills: p.kills,
             deaths: p.deaths,
-            won: p.id === winnerId,
+            won: p.id === actualWinnerId,
+            rank: idx + 1,
             weapons: p.inventory.map((w, i) => ({
                 weaponKey: w.key,
                 kills: p.weaponKills[i],
             })),
         }));
-        this.emit("match:end", { winnerId, results });
+        this.emit("match:end", {
+            winnerId: actualWinnerId,
+            winnerUsername: winner?.username || "Unknown",
+            results,
+        });
+        clearInterval(this.tickInterval);
+    }
+    cleanUp() {
         clearInterval(this.tickInterval);
     }
     handleDisconnect(userId) {
@@ -281,6 +305,15 @@ class GameRoom {
     broadcastState() {
         if (this.matchOver)
             return;
+        let roundTimeRemaining;
+        if (this.roundDurationSec > 0) {
+            const elapsed = Math.floor((Date.now() - this.roundStartTime) / 1000);
+            roundTimeRemaining = Math.max(0, this.roundDurationSec - elapsed);
+            if (roundTimeRemaining <= 0) {
+                this.endMatch();
+                return;
+            }
+        }
         const snapshot = [...this.players.values()].map((p) => ({
             id: p.id,
             username: p.username,
@@ -295,7 +328,7 @@ class GameRoom {
             deaths: p.deaths,
             alive: p.alive,
         }));
-        this.emit("state:update", { players: snapshot });
+        this.emit("state:update", { players: snapshot, roundTimeRemaining });
     }
     destroy() {
         this.isDestroyed = true;

@@ -150,7 +150,13 @@ io.on("connection", (socket) => {
       const curId = socketToRoom.get(socket.id);
       if (curId) {
         const r = rooms.get(curId);
-        if (r && r.isPublicArena && !r.isDestroyed && r.players.size <= MAX_ARENA_PLAYERS) {
+        if (
+          r &&
+          r.isPublicArena &&
+          !r.isDestroyed &&
+          !r.isMatchOver &&
+          r.players.size <= MAX_ARENA_PLAYERS
+        ) {
           publicRoom = r;
           publicRoomId = curId;
         }
@@ -161,6 +167,7 @@ io.on("connection", (socket) => {
           if (
             room.isPublicArena &&
             !room.isDestroyed &&
+            !room.isMatchOver &&
             (room.players.has(userId) || room.players.size < MAX_ARENA_PLAYERS)
           ) {
             publicRoom = room;
@@ -199,6 +206,7 @@ io.on("connection", (socket) => {
 
       socket.emit("match:found", {
         roomId: publicRoomId,
+        roundTimeRemaining: publicRoom.getRemainingTime(),
         players: [...publicRoom.players.values()].map((p) => ({
           id: p.id,
           username: p.username,
